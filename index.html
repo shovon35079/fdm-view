@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="bn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Biodata</title>
+<style>
+  :root { --ink:#111; --muted:#5d6b7c; --navy:#17375e; --line:#7a8797; --bg:#eef2f7; --card:#fff; --accent:#17375e; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0e1621; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); font-family: system-ui, "Noto Sans Bengali", "Noto Sans", Roboto, Arial, sans-serif; color:var(--ink); }
+  .bar { position:sticky; top:0; z-index:5; display:flex; flex-wrap:wrap; gap:8px; padding:10px 16px; background:#0b2a4a; justify-content:center; }
+  .bar button { border:0; border-radius:10px; padding:11px 16px; font-size:15px; font-weight:600; color:#fff; background:#2d6cb5; min-height:44px; }
+  .bar button.alt { background:#3a4a5e; }
+  .bar button:disabled { opacity:.5; }
+  .wrap { padding:16px; }
+  .sheet { max-width:820px; margin:0 auto; background:#fff; color:#111; padding:28px 26px; border-radius:6px; box-shadow:0 2px 14px rgba(0,0,0,.18); }
+  .titles h1 { margin:0 0 6px; font-size:19px; text-align:center; text-decoration:underline; font-weight:700; }
+  .titles h2 { margin:0 0 6px; font-size:16px; text-align:center; text-decoration:underline; font-weight:700; }
+  .titles { margin-bottom:18px; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th { background:var(--navy); color:#fff; text-align:center; padding:8px; border:1px solid var(--line); font-size:13px; }
+  td { padding:8px 10px; border:1px solid var(--line); vertical-align:top; white-space:pre-wrap; word-break:break-word; }
+  tr:nth-child(even) td { background:#f0f4f9; }
+  td:first-child { font-weight:600; width:36%; }
+  .msg { max-width:560px; margin:40px auto; text-align:center; color:var(--muted); line-height:1.6; padding:0 16px; }
+  .foot { max-width:820px; margin:12px auto 0; font-size:12px; color:var(--muted); text-align:center; }
+  @media print {
+    @page { size:A4; margin:12mm; }
+    body { background:#fff; }
+    .bar, .foot, .wrap > .noprint { display:none !important; }
+    .wrap { padding:0; }
+    .sheet { box-shadow:none; max-width:none; padding:0; }
+  }
+</style>
+</head>
+<body>
+<div class="bar" id="bar" hidden>
+  <button id="bPdf">Download PDF</button>
+  <button id="bDoc" class="alt">Download Word</button>
+  <button id="bPrint" class="alt">Print</button>
+</div>
+<div class="wrap">
+  <div id="msg" class="msg">Loading…</div>
+  <div class="sheet" id="sheet" hidden>
+    <div class="titles" id="titles"></div>
+    <table id="tbl"><thead id="thead"></thead><tbody id="tbody"></tbody></table>
+  </div>
+  <div class="foot" id="foot" hidden>This page shows the data held inside the QR code. Nothing is stored or sent anywhere.</div>
+</div>
+<script>
+"use strict";
+// ---------- raw inflate (small fallback for browsers without DecompressionStream) ----------
+function inflateRaw(src) {
+  var pos = 0, bitbuf = 0, bitcnt = 0, out = [];
+  function bits(need) {
+    var val = bitbuf;
+    while (bitcnt < need) { if (pos >= src.length) throw new Error("eof"); val |= src[pos++] << bitcnt; bitcnt += 8; }
+    bitbuf = val >>> need; bitcnt -= need;
+    return val & ((1 << need) - 1);
+  }
+  function construct(lengths, n) {
+    var count = new Array(16).fill(0), symbol = new Array(n), offs = new Array(16), i;
+    for (i = 0; i < n; i++) count[lengths[i]]++;
+    offs[1] = 0;
+    for (i = 1; i < 15; i++) offs[i + 1] = offs[i] + count[i];
+    for (i = 0; i < n; i++) if (lengths[i] !== 0) symbol[offs[lengths[i]]++] = i;
+    return { count: count, symbol: symbol };
+  }
+  function decode(h) {
+    var code = 0, first = 0, index = 0;
+    for (var len = 1; len <= 15; len++) {
+      code |= bits(1);
+      var c = h.count[len];
+      if (code - c < first) return h.symbol[index + (code - first)];
+      index += c; first += c; first <<= 1; code <<= 1;
+    }
+    throw new Error("bad code");
+  }
+  var LB = [3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,131,163,195,227,258];
+  var LE = [0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0];
+  var DB = [1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577];
+  var DE = [0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13];
+  var fixedL = null, fixedD = null;
+  function codes(hl, hd) {
+    for (;;) {
+      var sym = decode(hl);
+      if (sym < 256) out.push(sym);
+      else if (sym === 256) return;
+      else {
+        sym -= 257;
+        if (sym >= 29) throw new Error("bad sym");
+        var len = LB[sym] + bits(LE[sym]);
+        var ds = decode(hd);
+        var dist = DB[ds] + bits(DE[ds]);
+        if (dist > out.length) throw new Error("bad dist");
+        for (var k = 0; k < len; k++) out.push(out[out.length - dist]);
+      }
+    }
+  }
+  var last;
+  do {
+    last = bits(1);
+    var type = bits(2);
+    if (type === 0) {
+      bitbuf = 0; bitcnt = 0;
+      if (pos + 4 > src.length) throw new Error("eof");
+      var len = src[pos] | (src[pos + 1] << 8); pos += 4;
+      for (var i = 0; i < len; i++) out.push(src[pos++]);
+    } else if (type === 1) {
+      if (!fixedL) {
+        var l = new Array(288), i2;
+        for (i2 = 0; i2 < 144; i2++) l[i2] = 8;
+        for (; i2 < 256; i2++) l[i2] = 9;
+        for (; i2 < 280; i2++) l[i2] = 7;
+        for (; i2 < 288; i2++) l[i2] = 8;
+        fixedL = construct(l, 288);
+        var d = new Array(30).fill(5);
+        fixedD = construct(d, 30);
+      }
+      codes(fixedL, fixedD);
+    } else if (type === 2) {
+      var nlen = bits(5) + 257, ndist = bits(5) + 1, ncode = bits(4) + 4;
+      var order = [16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15];
+      var lengths = new Array(320).fill(0), idx;
+      for (idx = 0; idx < ncode; idx++) lengths[order[idx]] = bits(3);
+      var lencode = construct(lengths, 19);
+      idx = 0;
+      var all = new Array(nlen + ndist).fill(0);
+      while (idx < nlen + ndist) {
+        var s = decode(lencode);
+        if (s < 16) all[idx++] = s;
+        else {
+          var prev = 0, rep;
+          if (s === 16) { prev = all[idx - 1]; rep = 3 + bits(2); }
+          else if (s === 17) rep = 3 + bits(3);
+          else rep = 11 + bits(7);
+          while (rep--) all[idx++] = prev;
+        }
+      }
+      var hl = construct(all.slice(0, nlen), nlen);
+      var hd = construct(all.slice(nlen), ndist);
+      codes(hl, hd);
+    } else throw new Error("bad block");
+  } while (!last);
+  return new Uint8Array(out);
+}
+
+function b64urlToBytes(s) {
+  s = s.replace(/-/g, "+").replace(/_/g, "/");
+  while (s.length % 4) s += "=";
+  var bin = atob(s), u = new Uint8Array(bin.length);
+  for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+  return u;
+}
+
+function unpack(bytes) {
+  var native = typeof DecompressionStream !== "undefined" && !window.NO_NATIVE_INFLATE;
+  if (native) {
+    try {
+      var ds = new DecompressionStream("deflate-raw");
+      var stream = new Blob([bytes]).stream().pipeThrough(ds);
+      return new Response(stream).arrayBuffer().then(function (b) {
+        return new TextDecoder("utf-8").decode(b);
+      }).catch(function () { return new TextDecoder("utf-8").decode(inflateRaw(bytes)); });
+    } catch (e) { /* use the fallback below */ }
+  }
+  return Promise.resolve(new TextDecoder("utf-8").decode(inflateRaw(bytes)));
+}
+
+// ---------- page ----------
+var data = null;
+function el(id) { return document.getElementById(id); }
+function say(t) { el("msg").hidden = false; el("msg").textContent = t; }
+
+function render(d) {
+  var titles = el("titles");
+  (d.t || []).forEach(function (t, i) {
+    var h = document.createElement(i === 0 ? "h1" : "h2");
+    h.textContent = t; titles.appendChild(h);
+  });
+  if (d.d) { var h2 = document.createElement("h2"); h2.textContent = d.d; titles.appendChild(h2); }
+  if (d.h && d.h.length) {
+    var tr = document.createElement("tr");
+    d.h.forEach(function (x) { var th = document.createElement("th"); th.textContent = x; tr.appendChild(th); });
+    el("thead").appendChild(tr);
+  }
+  (d.r || []).forEach(function (row) {
+    var tr = document.createElement("tr");
+    row.forEach(function (x) { var td = document.createElement("td"); td.textContent = x; tr.appendChild(td); });
+    el("tbody").appendChild(tr);
+  });
+  el("msg").hidden = true;
+  el("sheet").hidden = false;
+  el("bar").hidden = false;
+  el("foot").hidden = false;
+  document.title = (d.t && d.t.length ? d.t[d.t.length - 1] : "Biodata");
+}
+
+function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+function fileBase() {
+  var d = data || {};
+  var who = "";
+  (d.r || []).some(function (row) { if (row.length > 1 && /NAME|নাম/i.test(row[0]) && !/NEXT|WIFE|FATHER|MOTHER/i.test(row[0])) { who = row[1]; return true; } return false; });
+  who = (who || "").replace(/[^\wঀ-৿]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40);
+  return "Biodata" + (who ? "_" + who : "");
+}
+
+function saveBlob(blob, name) {
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click();
+  setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+}
+
+function downloadWord() {
+  var d = data; if (!d) return;
+  var h = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><title>Biodata</title>' +
+    '<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom></w:WordDocument></xml><![endif]-->' +
+    '<style>@page{size:21cm 29.7cm;margin:1.5cm}body{font-family:"Nirmala UI","Noto Sans Bengali",Calibri,Arial;font-size:11pt}' +
+    'p.t{text-align:center;font-weight:bold;text-decoration:underline;font-size:14pt;margin:0 0 4pt}' +
+    'table{border-collapse:collapse;width:100%}th{background:#17375e;color:#fff;border:1px solid #7a8797;padding:5pt}td{border:1px solid #7a8797;padding:5pt;vertical-align:top}</style></head><body>';
+  (d.t || []).forEach(function (t) { h += '<p class="t">' + esc(t) + '</p>'; });
+  if (d.d) h += '<p class="t">' + esc(d.d) + '</p>';
+  h += '<p>&nbsp;</p><table>';
+  if (d.h && d.h.length) { h += '<tr>' + d.h.map(function (x) { return '<th>' + esc(x) + '</th>'; }).join('') + '</tr>'; }
+  (d.r || []).forEach(function (row) {
+    h += '<tr>' + row.map(function (x, i) { return '<td' + (i === 0 ? ' style="width:36%;font-weight:bold"' : '') + '>' + esc(x).replace(/\n/g, '<br>') + '</td>'; }).join('') + '</tr>';
+  });
+  h += '</table></body></html>';
+  saveBlob(new Blob(["﻿", h], { type: "application/msword" }), fileBase() + ".doc");
+}
+
+function loadScript(src) {
+  return new Promise(function (ok, bad) {
+    var s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = bad; document.head.appendChild(s);
+  });
+}
+function downloadPdf() {
+  var b = el("bPdf"); b.disabled = true; var old = b.textContent; b.textContent = "Please wait…";
+  function done() { b.disabled = false; b.textContent = old; }
+  var lib = window.html2pdf ? Promise.resolve() :
+    loadScript("https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js");
+  lib.then(function () {
+    return window.html2pdf().set({
+      margin: 10, filename: fileBase() + ".pdf",
+      image: { type: "jpeg", quality: 0.98 }, html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff" },
+      jsPDF: { unit: "mm", format: "a4", orientation: "portrait" }, pagebreak: { mode: ["css", "legacy"] }
+    }).from(el("sheet")).save();
+  }).then(done, function () {
+    done();
+    window.print();   // fallback: choose "Save as PDF" in the print window
+  });
+}
+
+el("bPdf").onclick = downloadPdf;
+el("bDoc").onclick = downloadWord;
+el("bPrint").onclick = function () { window.print(); };
+
+(function start() {
+  var h = (location.hash || "").replace(/^#/, "");
+  if (!h) { say("Scan a DIVISION MANAGEMENT biodata QR code with your phone camera to open it here."); return; }
+  var bytes;
+  try { bytes = b64urlToBytes(h); } catch (e) { say("This QR code could not be read."); return; }
+  unpack(bytes).then(function (txt) {
+    data = JSON.parse(txt);
+    render(data);
+  }).catch(function () { say("This QR code could not be read. Scan it again, or ask for a new one."); });
+})();
+</script>
+</body>
+</html>
